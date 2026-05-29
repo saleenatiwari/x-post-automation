@@ -16,7 +16,6 @@ NOTION_VERSION = "2022-06-28"
 # ── 1. Read Notion ─────────────────────────────────────────────────────────
 
 def get_notion_entries():
-    """Fetch the 5 most recent entries from the Ember Internship Log."""
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     headers = {
         "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -33,7 +32,6 @@ def get_notion_entries():
 
 
 def extract_text(page, field):
-    """Pull plain text from a Notion rich_text or title property."""
     prop = page["properties"].get(field, {})
     prop_type = prop.get("type")
     if prop_type in ("rich_text", "title"):
@@ -43,7 +41,6 @@ def extract_text(page, field):
 
 
 def parse_entry(page):
-    """Return a dict of all relevant fields from a Notion page."""
     return {
         "date":       extract_text(page, "Date"),
         "idea":       extract_text(page, "Idea how to post"),
@@ -58,7 +55,7 @@ def parse_entry(page):
 
 # ── 2. Call Gemini ─────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are running Saleena Tiwari's daily X post drafting routine.
+SYSTEM_PROMPT = """You are drafting X (Twitter) posts for Saleena Tiwari.
 
 ABOUT SALEENA:
 - First-year Honors CS student at Georgia Tech, co-founder of AI startup Cohort
@@ -74,37 +71,45 @@ VOICE RULES:
 - End each post with a question, a hot take, or an honest admission
 - No hashtags unless completely natural. No emojis unless they genuinely add something
 - Never sound like an ad for herself
-- Do not use too personal emotions and feelings
+- Do not use overly personal emotions or feelings
 - Do not post about internal business, client names, or anything confidential
-- Focus only on things that are learnable, relatable, or about personal growth and building journey
-- If the entry is mostly internal meeting notes, zoom out and post about a broader theme it surfaces
+- Focus only on things that are learnable, relatable, or about personal growth and the building journey
+- If the entry is mostly internal meeting notes, zoom out to a broader theme it surfaces
 
 POST FORMAT RULES:
 - Max 280 characters per post
-- A short 2-3 tweet thread is okay if the idea genuinely needs room
-- No internal business, client names, or confidential details
+- A short 2-3 tweet thread is okay if the idea genuinely needs room — format as: "1/ text\n\n2/ text\n\n3/ text"
+- No internal business details, client names, or confidential info
 - Correct grammar, capitalisation, and punctuation
+- Each post must be fully written out — not a placeholder, not a summary, not a title. The actual post text, ready to copy and paste.
 
 DECISION RULE:
-Read the most recent entry carefully. Ask yourself: does this entry contain more than one distinct, standalone idea worth posting about?
-- If yes: draft up to 3 posts and assign each a suggested send day (e.g. "Post today", "Post tomorrow", "Post Thursday")
-- If no: draft 2 variations of the same idea (different angles or formats)
-Never force extra posts. Only split if the ideas are genuinely different and each one stands alone.
+Does today's entry contain more than one distinct standalone idea worth posting about?
+- If yes: draft up to 3 posts, each with a different idea, assign a send day
+- If no: draft 2 variations of the same idea with different angles or formats
+Never force extra posts. Only split if the ideas are genuinely different and each stands alone.
 
-SCREENSHOT LOGIC:
-Look at "What I Did". If the work could have a visual artefact (Figma, code output, dashboard, diagram, UI, prototype, script terminal) — mark that post with a line at the top:
-📸 Consider screenshotting: [specific thing to capture]
-If the work is meeting-heavy or has no visual, skip the screenshot line entirely.
+SCREENSHOT RULE:
+Only add a screenshot suggestion if the work produced a clear visual artefact (Figma file, code terminal output, dashboard, UI, diagram). If the day was meeting-heavy or has no visual output, skip it entirely. Do NOT suggest screenshotting a journal entry or a diagram of an automation — only real work outputs.
 
-OUTPUT FORMAT:
-Return only the drafts, clearly labelled like:
-DRAFT 1 — Post today
-[post text]
+OUTPUT FORMAT — follow this exactly, no deviation:
+Each draft must be separated by the marker ---DRAFT--- on its own line.
+Start each draft with the send day label on its own line, like: Post today
+Then a blank line.
+Then the full post text, ready to copy and paste.
+If there is a screenshot suggestion, put it on its own line at the very top before the send day, starting with: 📸
 
-DRAFT 2 — Post tomorrow
-[post text]
+Example output:
+📸 Consider screenshotting: [specific real artefact]
+Post today
 
-No preamble, no explanation after. Just the labelled drafts."""
+[full post text here, written out completely]
+---DRAFT---
+Post tomorrow
+
+[full post text here, written out completely]
+
+Do not include any intro, explanation, preamble, or closing text. Just the drafts separated by ---DRAFT---."""
 
 
 def build_user_prompt(today, context_entries):
@@ -112,7 +117,7 @@ def build_user_prompt(today, context_entries):
     for e in context_entries:
         context_block += f"\n---\nDate: {e['date']}\nWhat I Did: {e['what_i_did']}\nWhat I Learned: {e['learned']}\n"
 
-    return f"""TODAY'S ENTRY (most recent — use this to draft the posts):
+    return f"""TODAY'S ENTRY — use this to write the posts:
 
 Date: {today['date']}
 Idea how to post: {today['idea']}
@@ -123,10 +128,10 @@ What to Improve: {today['improve']}
 Next Steps / To Do: {today['next_steps']}
 Personal: {today['personal']}
 
-CONTEXT ENTRIES (entries 2–5, for project arc and running themes only — do not post about these directly):
+CONTEXT (entries 2–5, understand the arc only — do not post about these):
 {context_block}
 
-Now write the drafts following all rules in the system prompt."""
+Write the drafts now. Full post text only. No placeholders."""
 
 
 def call_gemini(today, context_entries):
@@ -137,7 +142,7 @@ def call_gemini(today, context_entries):
         "contents": [
             {"role": "user", "parts": [{"text": full_prompt}]}
         ],
-        "generationConfig": {"maxOutputTokens": 1000, "temperature": 0.7},
+        "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.9},
     }
     for attempt in range(3):
         response = requests.post(url, headers=headers, json=body)
@@ -157,25 +162,20 @@ def send_telegram(text):
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
-        "parse_mode": "HTML",
     }
     response = requests.post(url, json=payload)
     response.raise_for_status()
 
 
 def split_drafts(raw_text):
-    """Split Gemini's output into individual draft messages."""
+    """Split on the ---DRAFT--- marker and clean each draft."""
+    parts = raw_text.split("---DRAFT---")
     drafts = []
-    current = []
-    for line in raw_text.splitlines():
-        if line.startswith("DRAFT ") and current:
-            drafts.append("\n".join(current).strip())
-            current = [line]
-        else:
-            current.append(line)
-    if current:
-        drafts.append("\n".join(current).strip())
-    return [d for d in drafts if d]
+    for part in parts:
+        cleaned = part.strip()
+        if cleaned:
+            drafts.append(cleaned)
+    return drafts
 
 
 # ── 4. Main ────────────────────────────────────────────────────────────────
@@ -195,16 +195,22 @@ def main():
     print("Calling Gemini...")
     raw_drafts = call_gemini(today_entry, context_entries)
     print("Gemini response received.")
+    print("--- RAW OUTPUT ---")
+    print(raw_drafts)
+    print("--- END RAW OUTPUT ---")
 
-    # Send to Telegram
-    send_telegram(f"Today's X drafts for {today_str}.")
+    # Send intro
+    send_telegram(f"X drafts for {today_str} ✏️")
 
+    # Send each draft as its own message
     drafts = split_drafts(raw_drafts)
-    for draft in drafts:
+    for i, draft in enumerate(drafts, 1):
         send_telegram(draft)
+        print(f"Sent draft {i}.")
 
-    send_telegram("✏️ https://x.com/SaleenaTiwari")
-    print(f"Sent {len(drafts)} draft(s) to Telegram. Done.")
+    # Send link
+    send_telegram("https://x.com/SaleenaTiwari")
+    print(f"Done. Sent {len(drafts)} draft(s) to Telegram.")
 
 
 if __name__ == "__main__":
