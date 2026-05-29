@@ -1,0 +1,32 @@
+name: Daily X Post Drafts
+
+on:
+  schedule:
+    # Runs at 8:00 AM Eastern Time (UTC-4 in summer) = 12:00 UTC
+    - cron: "0 12 * * 1-5"   # Monday–Friday only
+  workflow_dispatch:           # lets you trigger it manually from GitHub too
+
+jobs:
+  draft-posts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run post drafting script
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
