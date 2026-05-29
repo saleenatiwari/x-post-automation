@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 from datetime import datetime
 
@@ -26,16 +27,9 @@ def get_notion_entries():
         "sorts": [{"property": "Date", "direction": "descending"}],
         "page_size": 5,
     }
-    import time
-    for attempt in range(3):
-        response = requests.post(url, headers=headers, json=body)
-        if response.status_code == 429:
-            print(f"Rate limited, waiting 30s (attempt {attempt + 1}/3)...")
-            time.sleep(30)
-            continue
-        response.raise_for_status()
-        return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+    response = requests.post(url, headers=headers, json=body)
     response.raise_for_status()
+    return response.json()["results"]
 
 
 def extract_text(page, field):
@@ -145,9 +139,15 @@ def call_gemini(today, context_entries):
         ],
         "generationConfig": {"maxOutputTokens": 1000, "temperature": 0.7},
     }
-    response = requests.post(url, headers=headers, json=body)
+    for attempt in range(3):
+        response = requests.post(url, headers=headers, json=body)
+        if response.status_code == 429:
+            print(f"Rate limited, waiting 30s (attempt {attempt + 1}/3)...")
+            time.sleep(30)
+            continue
+        response.raise_for_status()
+        return response.json()["candidates"][0]["content"]["parts"][0]["text"]
     response.raise_for_status()
-    return response.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
 # ── 3. Send to Telegram ────────────────────────────────────────────────────
