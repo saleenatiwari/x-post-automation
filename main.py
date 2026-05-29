@@ -26,9 +26,16 @@ def get_notion_entries():
         "sorts": [{"property": "Date", "direction": "descending"}],
         "page_size": 5,
     }
-    response = requests.post(url, headers=headers, json=body)
+    import time
+    for attempt in range(3):
+        response = requests.post(url, headers=headers, json=body)
+        if response.status_code == 429:
+            print(f"Rate limited, waiting 30s (attempt {attempt + 1}/3)...")
+            time.sleep(30)
+            continue
+        response.raise_for_status()
+        return response.json()["candidates"][0]["content"]["parts"][0]["text"]
     response.raise_for_status()
-    return response.json()["results"]
 
 
 def extract_text(page, field):
