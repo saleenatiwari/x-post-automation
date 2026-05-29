@@ -5,7 +5,7 @@ from datetime import datetime
 # ── Config from environment variables (set in GitHub Secrets) ──────────────
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
@@ -44,18 +44,18 @@ def extract_text(page, field):
 def parse_entry(page):
     """Return a dict of all relevant fields from a Notion page."""
     return {
-        "date":         extract_text(page, "Date"),
-        "idea":         extract_text(page, "Idea how to post"),
-        "what_i_did":   extract_text(page, "What I Did"),
-        "learned":      extract_text(page, "What I Learned"),
-        "went_well":    extract_text(page, "What Went Well"),
-        "improve":      extract_text(page, "What to Improve"),
-        "next_steps":   extract_text(page, "Next Steps / To Do"),
-        "personal":     extract_text(page, "Personal"),
+        "date":       extract_text(page, "Date"),
+        "idea":       extract_text(page, "Idea how to post"),
+        "what_i_did": extract_text(page, "What I Did"),
+        "learned":    extract_text(page, "What I Learned"),
+        "went_well":  extract_text(page, "What Went Well"),
+        "improve":    extract_text(page, "What to Improve"),
+        "next_steps": extract_text(page, "Next Steps / To Do"),
+        "personal":   extract_text(page, "Personal"),
     }
 
 
-# ── 2. Call Claude ─────────────────────────────────────────────────────────
+# ── 2. Call Gemini ─────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """You are running Saleena Tiwari's daily X post drafting routine.
 
@@ -128,24 +128,19 @@ CONTEXT ENTRIES (entries 2–5, for project arc and running themes only — do n
 Now write the drafts following all rules in the system prompt."""
 
 
-def call_claude(today, context_entries):
-    url = "https://api.anthropic.com/v1/messages"
-    headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
+def call_gemini(today, context_entries):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    headers = {"Content-Type": "application/json"}
+    full_prompt = SYSTEM_PROMPT + "\n\n" + build_user_prompt(today, context_entries)
     body = {
-        "model": "claude-sonnet-4-5",
-        "max_tokens": 1000,
-        "system": SYSTEM_PROMPT,
-        "messages": [
-            {"role": "user", "content": build_user_prompt(today, context_entries)}
+        "contents": [
+            {"role": "user", "parts": [{"text": full_prompt}]}
         ],
+        "generationConfig": {"maxOutputTokens": 1000, "temperature": 0.7},
     }
     response = requests.post(url, headers=headers, json=body)
     response.raise_for_status()
-    return response.json()["content"][0]["text"]
+    return response.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
 # ── 3. Send to Telegram ────────────────────────────────────────────────────
@@ -162,7 +157,7 @@ def send_telegram(text):
 
 
 def split_drafts(raw_text):
-    """Split Claude's output into individual draft messages."""
+    """Split Gemini's output into individual draft messages."""
     drafts = []
     current = []
     for line in raw_text.splitlines():
@@ -189,10 +184,10 @@ def main():
     context_entries = entries[1:]
     print(f"Most recent entry: {today_entry['date']}")
 
-    # Call Claude
-    print("Calling Claude...")
-    raw_drafts = call_claude(today_entry, context_entries)
-    print("Claude response received.")
+    # Call Gemini
+    print("Calling Gemini...")
+    raw_drafts = call_gemini(today_entry, context_entries)
+    print("Gemini response received.")
 
     # Send to Telegram
     send_telegram(f"Today's X drafts for {today_str}.")
