@@ -12,6 +12,9 @@ TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 NOTION_VERSION = "2022-06-28"
 
+# Current, supported free-tier model. (gemini-2.0-flash was retired Mar 3, 2026.)
+GEMINI_MODEL = "gemini-2.5-flash-lite"
+
 
 # ── 1. Read Notion ─────────────────────────────────────────────────────────
 
@@ -65,7 +68,7 @@ ABOUT SALEENA:
 VOICE RULES:
 - Casual, stream-of-consciousness, direct, self-aware
 - Occasionally dry humor
-- Never LinkedIn polish — no "excited to share", no "thrilled to announce"
+- Never LinkedIn polish - no "excited to share", no "thrilled to announce"
 - Short sentences. Real feelings. Specific details beat vague inspiration
 - Frame from personal experience or behaviour first, then the insight
 - End each post with a question, a hot take, or an honest admission
@@ -78,10 +81,10 @@ VOICE RULES:
 
 POST FORMAT RULES:
 - Max 280 characters per post
-- A short 2-3 tweet thread is okay if the idea genuinely needs room — format as: "1/ text\n\n2/ text\n\n3/ text"
+- A short 2-3 tweet thread is okay if the idea genuinely needs room - format as: "1/ text\n\n2/ text\n\n3/ text"
 - No internal business details, client names, or confidential info
 - Correct grammar, capitalisation, and punctuation
-- Each post must be fully written out — not a placeholder, not a summary, not a title. The actual post text, ready to copy and paste.
+- Each post must be fully written out - not a placeholder, not a summary, not a title. The actual post text, ready to copy and paste.
 
 DECISION RULE:
 Does today's entry contain more than one distinct standalone idea worth posting about?
@@ -90,17 +93,16 @@ Does today's entry contain more than one distinct standalone idea worth posting 
 Never force extra posts. Only split if the ideas are genuinely different and each stands alone.
 
 SCREENSHOT RULE:
-Only add a screenshot suggestion if the work produced a clear visual artefact (Figma file, code terminal output, dashboard, UI, diagram). If the day was meeting-heavy or has no visual output, skip it entirely. Do NOT suggest screenshotting a journal entry or a diagram of an automation — only real work outputs.
+Only add a screenshot suggestion if the work produced a clear visual artefact (Figma file, code terminal output, dashboard, UI, diagram). If the day was meeting-heavy or has no visual output, skip it entirely. Do NOT suggest screenshotting a journal entry or a diagram of an automation - only real work outputs.
 
-OUTPUT FORMAT — follow this exactly, no deviation:
+OUTPUT FORMAT - follow this exactly, no deviation:
 Each draft must be separated by the marker ---DRAFT--- on its own line.
 Start each draft with the send day label on its own line, like: Post today
 Then a blank line.
 Then the full post text, ready to copy and paste.
-If there is a screenshot suggestion, put it on its own line at the very top before the send day, starting with: 📸
+If there is a screenshot suggestion, put it on its own line at the very top before the send day, starting with the camera emoji.
 
 Example output:
-📸 Consider screenshotting: [specific real artefact]
 Post today
 
 [full post text here, written out completely]
@@ -117,7 +119,7 @@ def build_user_prompt(today, context_entries):
     for e in context_entries:
         context_block += f"\n---\nDate: {e['date']}\nWhat I Did: {e['what_i_did']}\nWhat I Learned: {e['learned']}\n"
 
-    return f"""TODAY'S ENTRY — use this to write the posts:
+    return f"""TODAY'S ENTRY - use this to write the posts:
 
 Date: {today['date']}
 Idea how to post: {today['idea']}
@@ -128,14 +130,14 @@ What to Improve: {today['improve']}
 Next Steps / To Do: {today['next_steps']}
 Personal: {today['personal']}
 
-CONTEXT (entries 2–5, understand the arc only — do not post about these):
+CONTEXT (entries 2-5, understand the arc only - do not post about these):
 {context_block}
 
 Write the drafts now. Full post text only. No placeholders."""
 
 
 def call_gemini(today, context_entries):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     headers = {"Content-Type": "application/json"}
     full_prompt = SYSTEM_PROMPT + "\n\n" + build_user_prompt(today, context_entries)
     body = {
@@ -144,25 +146,38 @@ def call_gemini(today, context_entries):
         ],
         "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.9},
     }
-    for attempt in range(3):
+
+    for attempt in range(4):
         response = requests.post(url, headers=headers, json=body)
+
+        # Per-minute throttle or daily cap
         if response.status_code == 429:
-            print(f"Rate limited, waiting 30s (attempt {attempt + 1}/3)...")
-            time.sleep(30)
+            if "PerDay" in response.text or "per day" in response.text.lower():
+                raise SystemExit(
+                    "Daily free-tier quota is used up. It resets at midnight "
+                    "Pacific time. The code is fine - just try again tomorrow."
+                )
+            print(f"Per-minute rate limit, waiting 60s (attempt {attempt + 1}/4)...")
+            time.sleep(60)
             continue
+
+        # Gemini servers temporarily down
+        if response.status_code == 503:
+            print(f"Gemini unavailable (503), waiting 60s (attempt {attempt + 1}/4)...")
+            time.sleep(60)
+            continue
+
         response.raise_for_status()
         return response.json()["candidates"][0]["content"]["parts"][0]["text"]
-    response.raise_for_status()
+
+    raise SystemExit("Gemini did not respond after several attempts. Try again in a few minutes.")
 
 
 # ── 3. Send to Telegram ────────────────────────────────────────────────────
 
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-    }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
     response = requests.post(url, json=payload)
     response.raise_for_status()
 
@@ -170,12 +185,7 @@ def send_telegram(text):
 def split_drafts(raw_text):
     """Split on the ---DRAFT--- marker and clean each draft."""
     parts = raw_text.split("---DRAFT---")
-    drafts = []
-    for part in parts:
-        cleaned = part.strip()
-        if cleaned:
-            drafts.append(cleaned)
-    return drafts
+    return [p.strip() for p in parts if p.strip()]
 
 
 # ── 4. Main ────────────────────────────────────────────────────────────────
@@ -184,31 +194,26 @@ def main():
     today_str = datetime.now().strftime("%A, %B %-d")
     print(f"Running for {today_str}...")
 
-    # Read Notion
     pages = get_notion_entries()
     entries = [parse_entry(p) for p in pages]
     today_entry = entries[0]
     context_entries = entries[1:]
     print(f"Most recent entry: {today_entry['date']}")
 
-    # Call Gemini
-    print("Calling Gemini...")
+    print(f"Calling Gemini ({GEMINI_MODEL})...")
     raw_drafts = call_gemini(today_entry, context_entries)
     print("Gemini response received.")
     print("--- RAW OUTPUT ---")
     print(raw_drafts)
     print("--- END RAW OUTPUT ---")
 
-    # Send intro
-    send_telegram(f"X drafts for {today_str} ✏️")
+    send_telegram(f"X drafts for {today_str}")
 
-    # Send each draft as its own message
     drafts = split_drafts(raw_drafts)
     for i, draft in enumerate(drafts, 1):
         send_telegram(draft)
         print(f"Sent draft {i}.")
 
-    # Send link
     send_telegram("https://x.com/SaleenaTiwari")
     print(f"Done. Sent {len(drafts)} draft(s) to Telegram.")
 
